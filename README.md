@@ -23,7 +23,7 @@ The following packages are required for operation (example for Ubuntu/Debian-bas
 
 
 ```bash
-sudo apt install python3-gi python3-xlib gir1.2-gtk-3.0
+sudo apt install python3-gi python3-xlib gir1.2-gtk-3.0 fonts-roboto
 ```
 
 
