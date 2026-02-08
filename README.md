@@ -45,9 +45,9 @@ python3 dock_app.py
 Currently, the following settings are configured using variables within the code:
 
 
-* **APP_ID**: `dock.ams.f5.si`
+* **APP_ID**: none
 * **Launcher**: Configured to call `io.github.libredeb.lightpad`.
-* ** Appearance**: You can freely change colors and opacity by modifying the CSS within the `load_css()` method.
+* **Appearance**: You can freely change colors and opacity by modifying the CSS within the `load_css()` method.
 
 
 ## License
