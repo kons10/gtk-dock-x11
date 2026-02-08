@@ -46,12 +46,6 @@ class ModernDock(Gtk.ApplicationWindow):
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
 
-        # --- アイコンテーマの強制設定 ---
-        settings = Gtk.Settings.get_default()
-        if settings:
-            settings.set_property("gtk-icon-theme-name", "Papirus")
-            settings.set_property("gtk-application-prefer-dark-theme", False)
-        
         # 画面のコンポジット（透明化）を有効にする
         self.set_app_paintable(True)
         visual = self.get_screen().get_rgba_visual()
