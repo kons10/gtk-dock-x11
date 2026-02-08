@@ -1,5 +1,6 @@
 # gtk-dock-x11
 
+<img width="1365" height="584" alt="image" src="https://github.com/user-attachments/assets/8db259e4-d49e-4486-afde-28c664dd8bb3" />
 
 A lightweight and modern desktop dock for Linux (X11).
 It is built using a combination of GTK3 and Xlib, and is specifically designed to run smoothly with window managers such as Openbox.
