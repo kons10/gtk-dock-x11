@@ -7,17 +7,21 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, Gio, GdkPixbuf
 
-# X11操作用 (ライブラリとして本プロセス内で動作)
+# X11操作用
 try:
     from Xlib import display, X
     from Xlib.protocol import event as xevent
     HAS_XLIB = True
 except ImportError:
     HAS_XLIB = False
-    print("Error: python3-xlib is not installed. Please run: sudo apt install python3-xlib")
 
-# アプリケーションID (4文字の識別子を使用した指定の形式)
+# アプリケーションID
 APP_ID = 'dock.ams.f5.si'
+
+# --- 設定値 (ここを変えると全体が変わるよ) ---
+DOCK_HEIGHT = 60      # シェルフの高さ
+RADIUS_RATIO = 0.5    # 角の丸みの割合 (0.5 = 高さの半分)
+WIDTH_RATIO = 1    # 画面横幅に対するシェルフの幅
 
 class ModernDock(Gtk.ApplicationWindow):
     def __init__(self, app):
@@ -26,11 +30,8 @@ class ModernDock(Gtk.ApplicationWindow):
         self.set_title("Modern Dock")
         self.set_type_hint(Gdk.WindowTypeHint.DOCK)
         
-        # 画面の横幅を取得して初期サイズに設定
-        gdk_display = Gdk.Display.get_default()
-        monitor = gdk_display.get_primary_monitor() or gdk_display.get_monitor(0)
-        rect = monitor.get_geometry()
-        self.set_default_size(rect.width, 60)
+        # 初期サイズ設定
+        self.update_geometry()
 
         self.set_resizable(False)
         self.set_decorated(False)
@@ -44,7 +45,6 @@ class ModernDock(Gtk.ApplicationWindow):
         if visual and self.get_screen().is_composited():
             self.set_visual(visual)
 
-        # --- CSSプロバイダの初期化 ---
         self.css_provider = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), 
@@ -52,10 +52,8 @@ class ModernDock(Gtk.ApplicationWindow):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
         
-        # テーマ監視の設定
         self.settings = Gtk.Settings.get_default()
-        self.settings.connect("notify::gtk-theme-name", self.on_theme_changed)
-        self.settings.connect("notify::gtk-application-prefer-dark-theme", self.on_theme_changed)
+        self.settings.connect("notify::gtk-theme-name", lambda s, p: self.update_css())
         
         self.update_css()
         
@@ -69,242 +67,146 @@ class ModernDock(Gtk.ApplicationWindow):
             self.atom_client_list = self.x_display.intern_atom('_NET_CLIENT_LIST')
             self.atom_active_window = self.x_display.intern_atom('_NET_ACTIVE_WINDOW')
             
-        # --- レイアウト構築 ---
-        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        main_box.get_style_context().add_class("dock-container")
-        self.add(main_box)
+        # レイアウト
+        self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.main_box.get_style_context().add_class("dock-container")
+        self.add(self.main_box)
         
-        # [左] ランチャーセクション
+        # [左] ランチャー
         left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        left_box.get_style_context().add_class("left-section")
         left_box.set_valign(Gtk.Align.CENTER)
+        self.launcher_btn = Gtk.Button()
+        self.launcher_btn.get_style_context().add_class("launcher-button")
+        # アイコンサイズもドックの高さに合わせて調整
+        l_icon_size = int(DOCK_HEIGHT * 0.5)
+        launcher_icon = Gtk.Image.new_from_icon_name("view-app-grid-symbolic", Gtk.IconSize.MENU)
+        self.launcher_btn.add(launcher_icon)
+        self.launcher_btn.connect("clicked", self.on_launcher_clicked)
+        left_box.pack_start(self.launcher_btn, False, False, 0)
+        self.main_box.pack_start(left_box, False, False, 0)
         
-        launcher_btn = Gtk.Button()
-        launcher_btn.get_style_context().add_class("launcher-button")
-        launcher_icon = Gtk.Image.new_from_icon_name("view-app-grid-symbolic", Gtk.IconSize.BUTTON)
-        launcher_btn.add(launcher_icon)
-        # クリックイベントの接続
-        launcher_btn.connect("clicked", self.on_launcher_clicked)
-        
-        left_box.pack_start(launcher_btn, False, False, 0)
-        main_box.pack_start(left_box, False, False, 0)
-        
-        # [中] タスクバーセクション
-        self.center_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.center_box.get_style_context().add_class("center-section")
+        # [中] タスクバー
+        self.center_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self.center_box.set_halign(Gtk.Align.CENTER)
         self.center_box.set_valign(Gtk.Align.CENTER)
+        self.main_box.pack_start(self.center_box, True, False, 0)
         
-        main_box.pack_start(self.center_box, True, False, 0)
-        
-        # [右] ステータスセクション
+        # [右] ステータス
         right_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        right_box.get_style_context().add_class("right-section")
         right_box.set_valign(Gtk.Align.CENTER)
-        
         status_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         status_container.get_style_context().add_class("status-pill")
-        status_container.set_valign(Gtk.Align.CENTER)
         
-        for status_icon in ["network-wireless-symbolic", "audio-volume-medium-symbolic"]:
-            img = Gtk.Image.new_from_icon_name(status_icon, Gtk.IconSize.MENU)
-            img.get_style_context().add_class("status-icon")
-            status_container.pack_start(img, False, False, 0)
-            
         self.clock_label = Gtk.Label(label="00:00")
         self.clock_label.get_style_context().add_class("clock-label")
-        status_container.pack_start(self.clock_label, False, False, 0)
+        status_container.pack_end(self.clock_label, False, False, 0)
         
+        for icon in ["audio-volume-medium-symbolic", "network-wireless-symbolic"]:
+            img = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.MENU)
+            img.get_style_context().add_class("status-icon")
+            status_container.pack_end(img, False, False, 0)
+            
         right_box.pack_start(status_container, False, False, 0)
-        main_box.pack_start(right_box, False, False, 0)
+        self.main_box.pack_start(right_box, False, False, 0)
         
-        # タイマー設定
         GLib.timeout_add_seconds(1, self.update_clock)
-        self.update_clock()
-        
         if HAS_XLIB:
             GLib.timeout_add(1000, self.update_window_list)
-            self.update_window_list()
 
         self.show_all()
-        self.connect("realize", self.on_realize)
-        self.connect("map-event", self.on_map_event)
-
-    def build_icon_cache(self):
-        """Gioを使用してインストール済みのアプリ情報を本プロセス内でキャッシュする"""
-        apps = Gio.AppInfo.get_all()
-        for app in apps:
-            icon = app.get_icon()
-            if not icon: continue
-            
-            icon_string = icon.to_string()
-            if not icon_string: continue
-
-            # 複数のキーでアイコンを引けるように登録
-            app_id = app.get_id()
-            if app_id:
-                self.icon_cache[app_id.lower().replace(".desktop", "")] = icon_string
-            
-            executable = app.get_executable()
-            if executable:
-                try:
-                    exe_name = os.path.basename(executable).lower().split()[0]
-                    self.icon_cache[exe_name] = icon_string
-                except: pass
-
-            if isinstance(app, Gio.DesktopAppInfo):
-                startup_wm_class = app.get_startup_wm_class()
-                if startup_wm_class:
-                    self.icon_cache[startup_wm_class.lower()] = icon_string
-
-            display_name = app.get_name()
-            if display_name:
-                self.icon_cache[display_name.lower()] = icon_string
-
-    def load_icon_pixbuf(self, icon_string, size):
-        if not icon_string: return None
-        if self.icon_theme.has_icon(icon_string):
-            try:
-                return self.icon_theme.load_icon(icon_string, size, Gtk.IconLookupFlags.FORCE_SIZE)
-            except: pass
-        if os.path.exists(icon_string):
-            try:
-                return GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_string, size, size, True)
-            except: pass
-        try:
-            return self.icon_theme.load_icon("application-default-icon", size, 0)
-        except:
-            return None
-
-    def _is_dark_theme(self):
-        try:
-            theme_name = self.settings.get_property("gtk-theme-name")
-            prefer_dark = self.settings.get_property("gtk-application-prefer-dark-theme")
-            return prefer_dark or (theme_name and "dark" in theme_name.lower())
-        except: return False
+        self.connect("realize", lambda w: self.align_to_bottom())
+        self.connect("map-event", lambda w, e: self.align_to_bottom())
 
     def update_css(self):
         is_dark = self._is_dark_theme()
-        bg = "rgba(30, 30, 30, 0.90)" if is_dark else "rgba(255, 255, 255, 0.95)"
-        border = "#444444" if is_dark else "#cccccc"
-        text = "#eeeeee" if is_dark else "#555555"
-        pill = "rgba(255, 255, 255, 0.1)" if is_dark else "#f0f0f0"
-        hover = "rgba(255, 255, 255, 0.15)" if is_dark else "rgba(0, 0, 0, 0.1)"
-        shadow = "rgba(0, 0, 0, 0.5)" if is_dark else "rgba(0, 0, 0, 0.2)"
+        # 高さに合わせた割合計算
+        radius = int(DOCK_HEIGHT * RADIUS_RATIO)
+        # アイコンの余白感
+        btn_padding = int(DOCK_HEIGHT * 0.1)
+        
+        bg = "rgba(255, 255, 255, 0.85)" if not is_dark else "rgba(35, 35, 35, 0.9)"
+        text = "#333333" if not is_dark else "#ffffff"
+        hover = "rgba(0,0,0,0.05)" if not is_dark else "rgba(255,255,255,0.1)"
 
         css = f"""
         window {{ background-color: transparent; }}
         .dock-container {{
             background-color: {bg};
-            border-radius: 0px; 
-            margin: 0px;
-            padding: 5px 15px;
-            box-shadow: 0 4px 15px {shadow};
+            /* 上の角だけを高さの割合で丸くする */
+            border-radius: {radius}px {radius}px 0px 0px; 
+            padding: 0px 20px;
         }}
         .app-button {{
             background-color: transparent;
             border: none;
-            padding: 4px;
+            padding: {btn_padding}px;
             border-radius: 12px;
-            margin: 0 2px;
+            margin: 0 4px;
+            transition: all 200ms;
         }}
         .app-button:hover {{ background-color: {hover}; }}
-        .clock-label {{
-            font-family: 'Roboto', sans-serif;
-            font-weight: bold;
-            color: {text};
-            margin-left: 5px;
-        }}
-        .status-pill {{
-            background-color: {pill};
-            border-radius: 30px;
-            padding: 5px 15px;
-            margin: 5px;
-        }}
-        .status-icon {{ color: {text}; }}
         .launcher-button {{
             background-color: transparent;
-            border: 2px solid {border};
+            border: none;
             border-radius: 50%;
-            min-width: 40px;
-            min-height: 40px;
+            min-width: {int(DOCK_HEIGHT * 0.7)}px;
+            min-height: {int(DOCK_HEIGHT * 0.7)}px;
+        }}
+        .clock-label {{
+            font-size: {int(DOCK_HEIGHT * 0.25)}px;
+            font-weight: 500;
             color: {text};
         }}
-        .launcher-button:hover {{ background-color: {hover}; }}
+        .status-pill {{
+            background-color: {hover};
+            border-radius: 20px;
+            padding: 4px 12px;
+        }}
+        .status-icon {{ color: {text}; opacity: 0.8; }}
         """
         self.css_provider.load_from_data(css.encode('utf-8'))
 
-    def on_theme_changed(self, settings, pspec):
-        self.update_css()
-
-    def on_realize(self, widget):
-        self.align_to_bottom()
-
-    def on_map_event(self, widget, event):
-        self.align_to_bottom()
-        return False
+    def update_geometry(self):
+        gdk_display = Gdk.Display.get_default()
+        monitor = gdk_display.get_primary_monitor() or gdk_display.get_monitor(0)
+        rect = monitor.get_geometry()
+        self.dock_w = int(rect.width * WIDTH_RATIO)
+        self.set_default_size(self.dock_w, DOCK_HEIGHT)
 
     def align_to_bottom(self):
         gdk_display = Gdk.Display.get_default()
         monitor = gdk_display.get_primary_monitor() or gdk_display.get_monitor(0)
         geo = monitor.get_geometry()
         
-        w, h = geo.width, 60
-        x, y = geo.x, geo.y + geo.height - h
+        x = geo.x + (geo.width - self.dock_w) // 2
+        y = geo.y + geo.height - DOCK_HEIGHT
         
         self.move(x, y)
-        self.resize(w, h)
-
-        if HAS_XLIB:
-            try:
-                window = self.get_window()
-                if window:
-                    win = self.x_display.create_resource_object('window', window.get_xid())
-                    win.configure(x=int(x), y=int(y), width=int(w), height=int(h), stack_mode=X.Above)
-                    self.x_display.sync()
-            except: pass
+        self.resize(self.dock_w, DOCK_HEIGHT)
         return False
 
-    def on_launcher_clicked(self, button):
-        """
-        [重要] サブプロセスを使わずにGio経由でアプリを起動する。
-        DesktopAppInfoを使うことで、OSのデスクトップ機能の一部として
-        統合された形でアプリケーションが立ち上がるよ。
-        """
-        app_id = "io.github.libredeb.lightpad.desktop"
-        # 1. デスクトップファイルIDから情報を取得
-        app_info = Gio.DesktopAppInfo.new(app_id)
-        
-        if not app_info:
-            # 2. IDで見つからない場合は実行コマンド名から検索
-            app_info = Gio.AppInfo.create_from_commandline(
-                "io.github.libredeb.lightpad", 
-                "Lightpad", 
-                Gio.AppInfoCreateFlags.NONE
-            )
+    def build_icon_cache(self):
+        apps = Gio.AppInfo.get_all()
+        for app in apps:
+            icon = app.get_icon()
+            if not icon: continue
+            icon_str = icon.to_string()
+            if app.get_id(): self.icon_cache[app.get_id().lower().replace(".desktop","")] = icon_str
+            if app.get_executable():
+                try: self.icon_cache[os.path.basename(app.get_executable()).lower()] = icon_str
+                except: pass
+            if isinstance(app, Gio.DesktopAppInfo) and app.get_startup_wm_class():
+                self.icon_cache[app.get_startup_wm_class().lower()] = icon_str
 
-        if app_info:
-            # アプリを起動 (サブプロセス管理はGIOに任せる)
-            try:
-                # コンテキストを使用して起動（必要に応じて画面指定なども可能）
-                context = Gdk.AppLaunchContext()
-                app_info.launch([], context)
-            except Exception as e:
-                print(f"Launch error: {e}")
-
-    def update_clock(self):
-        self.clock_label.set_text(datetime.datetime.now().strftime("%H:%M"))
-        return True
-
-    def _get_icon_string_for_class(self, wm_class_name):
-        if not wm_class_name: return None
-        name = wm_class_name.lower()
-        mapping = {"gnome-terminal-server": "utilities-terminal", "pavucontrol": "multimedia-volume-control", "code": "vscode"}
-        if name in mapping: return mapping[name]
-        if name in self.icon_cache: return self.icon_cache[name]
-        for k, v in self.icon_cache.items():
-            if len(k) > 2 and (k in name or name in k): return v
-        return name
+    def load_icon_pixbuf(self, icon_string, size):
+        if not icon_string: return None
+        try:
+            if self.icon_theme.has_icon(icon_string):
+                return self.icon_theme.load_icon(icon_string, size, Gtk.IconLookupFlags.FORCE_SIZE)
+            elif os.path.exists(icon_string):
+                return GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_string, size, size, True)
+            return self.icon_theme.load_icon("application-default-icon", size, 0)
+        except: return None
 
     def update_window_list(self):
         if not HAS_XLIB: return True
@@ -317,18 +219,21 @@ class ModernDock(Gtk.ApplicationWindow):
         for child in self.center_box.get_children():
             self.center_box.remove(child)
 
+        # アイコンサイズは高さの70%くらいにする
+        icon_size = int(DOCK_HEIGHT * 0.7)
+
         for win_id in window_ids:
             try:
                 win = self.x_display.create_resource_object('window', win_id)
                 wm_class = win.get_wm_class()
                 if not wm_class: continue
                 
-                app_name, app_class = wm_class[0].lower(), wm_class[1].lower()
-                if APP_ID in app_name or "modern dock" in app_name: continue
-                if app_class in ["desktop_window", "dock", "gnome-shell", "xfce4-panel", "plank"]: continue
+                app_class = wm_class[1].lower()
+                if APP_ID in app_class or "modern dock" in app_class: continue
+                if app_class in ["desktop_window", "dock", "gnome-shell", "xfce4-panel"]: continue
 
-                icon_str = self._get_icon_string_for_class(app_class) or self._get_icon_string_for_class(app_name)
-                pixbuf = self.load_icon_pixbuf(icon_str, 48) or self.load_icon_pixbuf("application-x-executable", 48)
+                icon_str = self._get_icon_string_for_class(app_class)
+                pixbuf = self.load_icon_pixbuf(icon_str, icon_size)
 
                 btn = Gtk.Button()
                 btn.get_style_context().add_class("app-button")
@@ -341,16 +246,36 @@ class ModernDock(Gtk.ApplicationWindow):
             except: continue
         return True
 
+    def _get_icon_string_for_class(self, name):
+        mapping = {"gnome-terminal-server": "utilities-terminal", "code": "vscode"}
+        if name in mapping: return mapping[name]
+        if name in self.icon_cache: return self.icon_cache[name]
+        return name
+
     def activate_window(self, win_id):
-        """Xlibライブラリの機能を用いて本プロセス内からウィンドウ操作を行う"""
         try:
             win = self.x_display.create_resource_object('window', win_id)
             data = [2, X.CurrentTime, 0, 0, 0]
             ev = xevent.ClientMessage(window=win, client_type=self.atom_active_window, data=(32, data))
             self.x_root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
             self.x_display.flush()
-        except Exception as e:
-            print(f"Activation failed: {e}")
+        except: pass
+
+    def update_clock(self):
+        self.clock_label.set_text(datetime.datetime.now().strftime("%H:%M"))
+        return True
+
+    def _is_dark_theme(self):
+        try:
+            theme = self.settings.get_property("gtk-theme-name").lower()
+            return "dark" in theme or self.settings.get_property("gtk-application-prefer-dark-theme")
+        except: return False
+
+    def on_launcher_clicked(self, button):
+        app_info = Gio.DesktopAppInfo.new("io.github.libredeb.lightpad.desktop")
+        if app_info:
+            try: app_info.launch([], Gdk.AppLaunchContext())
+            except Exception as e: print(f"Launch error: {e}")
 
 class DockApp(Gtk.Application):
     def __init__(self):
