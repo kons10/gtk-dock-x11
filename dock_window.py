@@ -117,6 +117,14 @@ class ModernDock(Gtk.ApplicationWindow):
         radius = int(config.DOCK_HEIGHT * config.RADIUS_RATIO)
         btn_padding = int(config.DOCK_HEIGHT * 0.1)
         
+        # 右側のバーの高さを計算
+        control_height = int(config.DOCK_HEIGHT * config.CONTROL_RATIO)
+        
+        # 高さから上下の余白を引いて、適切なパディングを少しだけ入れる（微調整）
+        # 高さを固定するために min-height を使い、padding は最小限にする
+        pill_padding_v = 0 
+        pill_padding_h = 12
+        
         css = f"""
         window {{ background-color: transparent; }}
         .dock-container {{
@@ -148,7 +156,8 @@ class ModernDock(Gtk.ApplicationWindow):
         .status-pill {{
             background-color: {theme_colors["hover"]};
             border-radius: 20px;
-            padding: 4px 12px;
+            padding: {pill_padding_v}px {pill_padding_h}px;
+            min-height: {control_height}px;
         }}
         .status-icon {{ color: {theme_colors["text"]}; opacity: 0.8; }}
         """
