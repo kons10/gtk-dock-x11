@@ -130,7 +130,7 @@ class ModernDock(Gtk.ApplicationWindow):
         .dock-container {{
             background-color: {theme_colors["bg"]};
             border-radius: {radius}px {radius}px 0px 0px; 
-            padding: 0px 20px;
+            padding: 0px 10px;
         }}
         .app-button {{
             background-color: transparent;
