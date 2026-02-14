@@ -37,7 +37,7 @@ Simply clone the repository and run it in Python.
 
 
 ```bash
-python3 dock_app.py
+python3 main.py
 ```
 
 ## Settings
