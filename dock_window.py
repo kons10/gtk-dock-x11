@@ -8,6 +8,7 @@ from gi.repository import Gtk, Gdk, GLib, Gio, GdkPixbuf
 # 分割したファイルをインポート
 import config
 from x11_helper import X11Helper
+import animation  # アニメーションモジュール
 
 class ModernDock(Gtk.ApplicationWindow):
     def __init__(self, app):
@@ -53,6 +54,9 @@ class ModernDock(Gtk.ApplicationWindow):
         self.icon_theme = Gtk.IconTheme.get_default()
         self.icon_cache = {}
         self.build_icon_cache()
+
+        # 実行中のアニメーション保持用
+        self.running_animations = []
             
         # --- レイアウト構築 ---
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -66,7 +70,7 @@ class ModernDock(Gtk.ApplicationWindow):
         # 定期実行タスク
         GLib.timeout_add_seconds(1, self.update_clock)
         
-        # X11イベント監視を開始 (1秒ごとのポーリングをやめて、イベント駆動に変更)
+        # X11イベント監視を開始
         if self.x11.enabled:
             self.x11.start_monitoring(self.update_window_list)
             # 初回描画
@@ -120,14 +124,11 @@ class ModernDock(Gtk.ApplicationWindow):
         
         radius = int(config.DOCK_HEIGHT * config.RADIUS_RATIO)
         btn_padding = int(config.DOCK_HEIGHT * 0.1)
-        
-        # 右側のバーの高さを計算
         control_height = int(config.DOCK_HEIGHT * config.CONTROL_RATIO)
-        
-        # 高さから上下の余白を引いて、適切なパディングを少しだけ入れる（微調整）
         pill_padding_v = 0 
         pill_padding_h = 12
         
+        # CSS transition はホバーエフェクト用に残しておく
         css = f"""
         window {{ background-color: transparent; }}
         .dock-container {{
@@ -141,7 +142,7 @@ class ModernDock(Gtk.ApplicationWindow):
             padding: {btn_padding}px;
             border-radius: 12px;
             margin: 0 4px;
-            transition: all 200ms;
+            transition: background-color 200ms;
         }}
         .app-button:hover {{ background-color: {theme_colors["hover"]}; }}
         .launcher-button {{
@@ -184,10 +185,8 @@ class ModernDock(Gtk.ApplicationWindow):
         self.move(x, y)
         self.resize(self.dock_w, config.DOCK_HEIGHT)
         
-        # Strutを設定して、最大化したウィンドウが被らないようにする
         if self.x11.enabled:
             try:
-                # GDKウィンドウからXIDを取得
                 win_id = self.get_window().get_xid()
                 self.x11.set_strut(
                     win_id, 
@@ -201,14 +200,12 @@ class ModernDock(Gtk.ApplicationWindow):
         return False
 
     def build_icon_cache(self):
-        # アプリ情報の収集
         apps = Gio.AppInfo.get_all()
         for app in apps:
             icon = app.get_icon()
             if not icon: continue
             icon_str = icon.to_string()
             
-            # ID, 実行ファイル名, WM_CLASSで検索できるようにキャッシュ
             if app.get_id(): 
                 self.icon_cache[app.get_id().lower().replace(".desktop","")] = icon_str
             if app.get_executable():
@@ -229,20 +226,38 @@ class ModernDock(Gtk.ApplicationWindow):
         except: return None
 
     def update_window_list(self):
+        """ウィンドウリストを更新する（差分更新・アニメーション付き）"""
         window_ids = self.x11.get_window_list()
         
-        # リストをクリア
+        # 現在表示されているボタンの情報を取得
+        # {win_id: button_widget} の辞書を作る
+        current_buttons = {}
         for child in self.center_box.get_children():
-            self.center_box.remove(child)
+            if hasattr(child, 'win_id'):
+                current_buttons[child.win_id] = child
 
+        # --- 削除処理 ---
+        # 新しいリストに含まれないIDのボタンを削除
+        for win_id, btn in list(current_buttons.items()):
+            if win_id not in window_ids:
+                # フェードアウトして消すなどの処理も入れられるが、今回は即削除
+                self.center_box.remove(btn)
+                del current_buttons[win_id]
+
+        # --- 追加処理 ---
+        # 新しいIDを追加
         icon_size = int(config.DOCK_HEIGHT * 0.7)
-
+        
         for win_id in window_ids:
+            # すでに表示されているならスキップ
+            if win_id in current_buttons:
+                continue
+
             try:
                 app_class = self.x11.get_window_class(win_id)
                 if not app_class: continue
                 
-                # 自分自身やデスクトップなどは除外
+                # 除外リスト
                 if config.APP_ID in app_class or "modern dock" in app_class: continue
                 if app_class in ["desktop_window", "dock", "gnome-shell", "xfce4-panel"]: continue
 
@@ -251,22 +266,56 @@ class ModernDock(Gtk.ApplicationWindow):
 
                 btn = Gtk.Button()
                 btn.get_style_context().add_class("app-button")
+                btn.win_id = win_id  # IDを紐付け
+                
                 img = Gtk.Image()
                 if pixbuf: img.set_from_pixbuf(pixbuf)
                 btn.add(img)
+                
+                # イベント接続
+                btn.connect("clicked", self.on_task_button_clicked, win_id)
+                
+                # ボックスに追加して表示
+                self.center_box.pack_start(btn, False, False, 0)
                 btn.show_all()
                 
-                # クリック時の動作 (ウィンドウ切り替え)
-                btn.connect("clicked", self.on_task_button_clicked, win_id)
-                self.center_box.pack_start(btn, False, False, 0)
-            except: continue
-        return True # イベントハンドラとして呼ばれる場合は戻り値は無視されるが、念のため
+                # --- アニメーション開始 ---
+                if config.ANIMATION_ENABLED:
+                    self._animate_button_entry(btn)
+
+            except Exception as e:
+                print(f"Error adding button: {e}")
+                continue
+        
+        return True
+
+    def _animate_button_entry(self, widget):
+        """ボタン出現時のアニメーションを実行"""
+        # イージング関数を選択
+        easing_func = getattr(animation.Easing, config.ANIMATION_EASING, animation.Easing.ease_out_quad)
+        
+        # 初期状態: 透明
+        widget.set_opacity(0.0)
+        
+        def on_update(val):
+            # 透明度: 0 -> 1 だけ変化させる（マージン操作は警告の原因になるので廃止）
+            widget.set_opacity(val)
+            
+        def on_complete():
+            widget.set_opacity(1.0)
+
+        anim = animation.Animator(
+            duration_ms=config.ANIMATION_DURATION,
+            update_callback=on_update,
+            complete_callback=on_complete,
+            easing_func=easing_func
+        )
+        anim.start()
+        # メモリリーク防止のため参照を保持（簡易実装）
+        self.running_animations.append(anim)
 
     def on_task_button_clicked(self, button, win_id):
-        """タスクバーのアイコンをクリックした時の動作（トグル）"""
         active_id = self.x11.get_active_window()
-        
-        # すでにアクティブなら最小化、そうでなければアクティブ化
         if active_id == win_id:
             self.x11.minimize_window(win_id)
         else:
@@ -289,21 +338,15 @@ class ModernDock(Gtk.ApplicationWindow):
         except: return False
 
     def on_launcher_clicked(self, button):
-        # config.py からコマンドを取得して実行
         launcher_cmd = getattr(config, 'LAUNCHER_CMD', 'io.github.libredeb.lightpad.desktop')
-        
-        # .desktop ID として実行を試みる
         app_info = Gio.DesktopAppInfo.new(launcher_cmd)
         if app_info:
             try: 
                 app_info.launch([], Gdk.AppLaunchContext())
-                print(f"Launched: {launcher_cmd}")
             except Exception as e: 
                 print(f"Launch error: {e}")
         else:
-            # IDで見つからない場合はコマンドラインとして実行を試みる（フォールバック）
             try:
                 GLib.spawn_command_line_async(launcher_cmd)
-                print(f"Executed command: {launcher_cmd}")
             except Exception as e:
                 print(f"Command execution error: {e}")

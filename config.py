@@ -12,6 +12,12 @@ CONTROL_RATIO = 0.8   # 右側ステータスバーの高さの割合 (1.0でシ
 # 例: "io.github.libredeb.lightpad.desktop" や "firefox.desktop" など
 LAUNCHER_CMD = "io.github.libredeb.lightpad.desktop"
 
+# --- アニメーション設定 (New!) ---
+ANIMATION_ENABLED = True     # アニメーションを有効にするか
+ANIMATION_DURATION = 800     # アニメーションの時間 (ミリ秒)
+# イージングの種類: 'linear', 'ease_out_quad', 'ease_out_back' (ポコンと出るやつ)
+ANIMATION_EASING = 'ease_out_back' 
+
 # テーマカラー設定 (必要ならここも調整できるようにしておいたよ)
 COLORS = {
     "light": {
