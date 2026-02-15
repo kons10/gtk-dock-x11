@@ -238,11 +238,21 @@ class ModernDock(Gtk.ApplicationWindow):
                 btn.add(img)
                 btn.show_all()
                 
-                # クリック時の動作
-                btn.connect("clicked", lambda b, wid=win_id: self.x11.activate_window(wid))
+                # クリック時の動作 (ウィンドウ切り替え)
+                btn.connect("clicked", self.on_task_button_clicked, win_id)
                 self.center_box.pack_start(btn, False, False, 0)
             except: continue
         return True
+
+    def on_task_button_clicked(self, button, win_id):
+        """タスクバーのアイコンをクリックした時の動作（トグル）"""
+        active_id = self.x11.get_active_window()
+        
+        # すでにアクティブなら最小化、そうでなければアクティブ化
+        if active_id == win_id:
+            self.x11.minimize_window(win_id)
+        else:
+            self.x11.activate_window(win_id)
 
     def _get_icon_string_for_class(self, name):
         mapping = {"gnome-terminal-server": "utilities-terminal", "code": "vscode"}
@@ -261,7 +271,21 @@ class ModernDock(Gtk.ApplicationWindow):
         except: return False
 
     def on_launcher_clicked(self, button):
-        app_info = Gio.DesktopAppInfo.new("io.github.libredeb.lightpad.desktop")
+        # config.py からコマンドを取得して実行
+        launcher_cmd = getattr(config, 'LAUNCHER_CMD', 'io.github.libredeb.lightpad.desktop')
+        
+        # .desktop ID として実行を試みる
+        app_info = Gio.DesktopAppInfo.new(launcher_cmd)
         if app_info:
-            try: app_info.launch([], Gdk.AppLaunchContext())
-            except Exception as e: print(f"Launch error: {e}")
+            try: 
+                app_info.launch([], Gdk.AppLaunchContext())
+                print(f"Launched: {launcher_cmd}")
+            except Exception as e: 
+                print(f"Launch error: {e}")
+        else:
+            # IDで見つからない場合はコマンドラインとして実行を試みる（フォールバック）
+            try:
+                GLib.spawn_command_line_async(launcher_cmd)
+                print(f"Executed command: {launcher_cmd}")
+            except Exception as e:
+                print(f"Command execution error: {e}")

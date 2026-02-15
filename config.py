@@ -7,6 +7,11 @@ RADIUS_RATIO = 0.5    # 角の丸みの割合 (0.5 = 高さの半分)
 WIDTH_RATIO = 1.0     # 画面横幅に対するシェルフの幅
 CONTROL_RATIO = 0.8   # 右側ステータスバーの高さの割合 (1.0でシェルフと同じ高さ)
 
+# ランチャー設定
+# 起動したいアプリの .desktop ファイルIDを指定してね
+# 例: "io.github.libredeb.lightpad.desktop" や "firefox.desktop" など
+LAUNCHER_CMD = "io.github.libredeb.lightpad.desktop"
+
 # テーマカラー設定 (必要ならここも調整できるようにしておいたよ)
 COLORS = {
     "light": {

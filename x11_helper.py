@@ -20,6 +20,7 @@ class X11Helper:
                 self.root = self.display.screen().root
                 self.atom_client_list = self.display.intern_atom('_NET_CLIENT_LIST')
                 self.atom_active_window = self.display.intern_atom('_NET_ACTIVE_WINDOW')
+                self.atom_wm_change_state = self.display.intern_atom('WM_CHANGE_STATE')
             except Exception as e:
                 print(f"X11 init failed: {e}")
                 self.enabled = False
@@ -52,6 +53,20 @@ class X11Helper:
             pass
         return None
 
+    def get_active_window(self):
+        """現在アクティブな（フォーカスされている）ウィンドウIDを取得する"""
+        if not self.enabled:
+            return None
+        
+        try:
+            prop = self.root.get_full_property(self.atom_active_window, X.AnyPropertyType)
+            if prop and prop.value:
+                # リスト形式で返ってくるので最初の要素を返す
+                return prop.value[0]
+        except Exception as e:
+            print(f"Error getting active window: {e}")
+        return None
+
     def activate_window(self, win_id):
         """指定したウィンドウを最前面に持ってくる"""
         if not self.enabled:
@@ -69,3 +84,22 @@ class X11Helper:
             self.display.flush()
         except Exception as e:
             print(f"Error activating window: {e}")
+
+    def minimize_window(self, win_id):
+        """指定したウィンドウを最小化する"""
+        if not self.enabled:
+            return
+
+        try:
+            win = self.display.create_resource_object('window', win_id)
+            # IconicState = 3
+            data = [3, 0, 0, 0, 0]
+            ev = xevent.ClientMessage(
+                window=win,
+                client_type=self.atom_wm_change_state,
+                data=(32, data)
+            )
+            self.root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+            self.display.flush()
+        except Exception as e:
+            print(f"Error minimizing window: {e}")
