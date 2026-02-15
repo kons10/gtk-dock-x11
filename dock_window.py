@@ -65,8 +65,12 @@ class ModernDock(Gtk.ApplicationWindow):
         
         # 定期実行タスク
         GLib.timeout_add_seconds(1, self.update_clock)
+        
+        # X11イベント監視を開始 (1秒ごとのポーリングをやめて、イベント駆動に変更)
         if self.x11.enabled:
-            GLib.timeout_add(1000, self.update_window_list)
+            self.x11.start_monitoring(self.update_window_list)
+            # 初回描画
+            self.update_window_list()
 
         self.connect("realize", lambda w: self.align_to_bottom())
         self.connect("map-event", lambda w, e: self.align_to_bottom())
@@ -121,7 +125,6 @@ class ModernDock(Gtk.ApplicationWindow):
         control_height = int(config.DOCK_HEIGHT * config.CONTROL_RATIO)
         
         # 高さから上下の余白を引いて、適切なパディングを少しだけ入れる（微調整）
-        # 高さを固定するために min-height を使い、padding は最小限にする
         pill_padding_v = 0 
         pill_padding_h = 12
         
@@ -180,6 +183,21 @@ class ModernDock(Gtk.ApplicationWindow):
         
         self.move(x, y)
         self.resize(self.dock_w, config.DOCK_HEIGHT)
+        
+        # Strutを設定して、最大化したウィンドウが被らないようにする
+        if self.x11.enabled:
+            try:
+                # GDKウィンドウからXIDを取得
+                win_id = self.get_window().get_xid()
+                self.x11.set_strut(
+                    win_id, 
+                    x, y, 
+                    self.dock_w, config.DOCK_HEIGHT,
+                    geo.width, geo.height
+                )
+            except Exception as e:
+                print(f"Failed to set strut: {e}")
+                
         return False
 
     def build_icon_cache(self):
@@ -242,7 +260,7 @@ class ModernDock(Gtk.ApplicationWindow):
                 btn.connect("clicked", self.on_task_button_clicked, win_id)
                 self.center_box.pack_start(btn, False, False, 0)
             except: continue
-        return True
+        return True # イベントハンドラとして呼ばれる場合は戻り値は無視されるが、念のため
 
     def on_task_button_clicked(self, button, win_id):
         """タスクバーのアイコンをクリックした時の動作（トグル）"""
